@@ -1,0 +1,243 @@
+﻿#######################################################################
+#######################################################################
+## ESTIMATE (DESIGN-BASED) EMIGRATION RATES                          ##
+##             PIECEWISE CONSTANT                                    ##        
+##                                                                   ##                                         
+#######################################################################
+#######################################################################
+
+rm(list=ls())
+# ===================================================================
+# ==========    LOAD SOURCES AND READ DATA: MAFE 2014     ===========
+# ===================================================================
+library(mgcv)
+library (eha)  # for function table.events in migr.rates.R
+path <-  "path to the  Dataset"
+
+d.merge<- read.table(file=paste (path,"dataMAFE_prep27012016.txt",sep=""), header = TRUE)
+data$hh.ident=data$n.menage
+
+locpath_read <- "/Users/frans/Documents/R/MAFE/R/Read/"
+names(d.merge)[which (names (d.merge)=="n.menage.x")] <- "n.menage"
+names(d.merge)[which (names (d.merge)=="n.indiv.x")] <- "n.indiv"
+getwd()
+nsample <- nrow(d.merge)  # 12350 records
+path2 <-  "path to the ancillary R-Codes"
+source (paste (path2,"sons_daughters.r",sep=""))
+source (paste (path2,"migr.rates.r",sep=""))
+source (paste (path2,"survm.r",sep=""))
+source (paste (path2,"piecewise_w.r",sep=""))
+source (paste (path2,"createRepl.r",sep=""))
+source (paste (path2,"evaluate_replicates.r",sep=""))
+source (paste (path2,"ci.r",sep=""))
+
+# ===================================================================
+# ======    Create data file for sons and daughters              ====
+# ===================================================================
+datTemp <- sons_daughters (d.merge)
+
+#  ====================================================================
+#  ================    Compute emigration rates    ====================
+#  ================    using migr.rates function   ====================
+#  ===========   exponential model without covariates     =============
+#  ===========           Create survival object           =============
+#  ====================================================================
+
+migr_rates0 <- migr.rates(datTemp)
+   # surv : for M+F, M and F: 1) emigration rates (mrate), events, exposures: 
+   #                                 unweighted and weighted data
+   #                                 migr_rates0$surv$Combined$mrate
+   #                          2) survival object (surv) 
+   #                          3) data (datTemp)
+   # cases : for M+F, M and F: 1) nam:  MF, M or F
+   #                           2) surv: mrate and surv and datTemp
+   #                           3) ASMR: events, exposures and rates by age
+   #                           4) trend: events, exposures and rqtes by period
+   # exponential: for M+F, M and F: exponential survival regression model 
+   #                                survreg function of survival package
+   #                                unweighted and weighted data
+   #                                1) nam
+   #                                2) rate_u
+   #                                3) rate_w
+   #                                4) int95_u  exponential survival regression model
+   #                                5° int95_w  exponential survival regression model
+  
+rates_w0 <- c(migr_rates0$exponential$Combined$rate_w,migr_rates0$exponential$Male$rate_w,migr_rates0$exponential$Female$rate_w)
+rates_u0 <- c(migr_rates0$exponential$Combined$rate_u,migr_rates0$exponential$Male$rate_u,migr_rates0$exponential$Female$rate_u)
+# Total exposure unweighted
+# sum(migr_rates0$cases$Combined$ASMR$exposure)
+
+# =================================================================
+# ===========       Print emigration rates by sex        ==========
+# ===========     for unweighted and weighted data       ==========
+# ===========             Original sample                ==========
+# =================================================================
+namcase <- c("Combined","Males","Females")
+names(rates_u0) <- names(rates_w0) <-namcase
+# Events, exposures and rates for unweighted and weighted cases: combined, m, f 
+print ("EMIGRATION (total): counts, exposures, rates. Combined, males, females")
+eer_u <- rbind(migr_rates0$surv[[1]]$mrate[1,],migr_rates0$surv[[2]]$mrate[1,],migr_rates0$surv[[3]]$mrate[1,])
+rownames(eer_u) <- namcase
+eer_u <- eer_u[,-1]
+eer_u[,2] <- round (eer_u[,2],0)
+eer_u[,3] <- round (eer_u[,3],4)
+eer_w <- rbind(migr_rates0$surv[[1]]$mrate[2,],migr_rates0$surv[[2]]$mrate[2,],migr_rates0$surv[[3]]$mrate[2,])
+rownames(eer_w) <- namcase
+eer_w <- eer_w[,-1]
+eer_w[,2] <- round (eer_w[,2],0)
+eer_u
+eer_w
+
+# ===================================================================
+# ======== Use survival object and perstat of eha package     =======
+# ========             to compute o/e rates                   =======
+# ===================================================================
+
+nexp=3
+oe1 <- oe2 <- oe3 <- vector ("list",nexp)
+for (iter in 1:nexp)
+{
+enter <- migr_rates0$surv[[iter]]$surv[,1]
+exit <- migr_rates0$surv[[iter]]$surv[,2]
+status <- migr_rates0$surv[[iter]]$surv[,3]
+birth <- migr_rates0$surv[[iter]]$datTemp$born[!is.na(migr_rates0$surv[[iter]]$surv[,1])]
+surv.eha <- cbind (enter,exit,status,birth)
+# occurrence-exposure rates (unweighted)
+oe1[[iter]] <- perstat(surv=surv.eha, period=c(1975,2009), age = c(0, 200))
+oe2[[iter]] <- perstat(surv=surv.eha, period=c(1975,1985,2009), age = c(0,100))
+oe3[[iter]] <- perstat(surv=surv.eha, period=c(1975,1985,1995,2009), age = c(0,100))
+}
+oe1
+oe2
+oe3
+
+#  ====================================================================
+#    GENERATE LIST OF repN (eg 200) REPLICATES  replSet[[.]]
+#  ====================================================================
+Sys.time()
+repN <- 500
+replSet <- vector("list", repN)
+names (replSet) <- 1:repN
+for(r in 1:repN){
+  replSet[[r]] <- createRepl(datTemp)
+}
+Sys.time()
+# =================================================================
+# ========       Evaluate each of the repN replicates   ===========
+# ========      replSet, using migr.rates function      ===========
+# ========   Compute emigration rates and emig probabilities ======
+# ========             for each replicate                 =========
+# ===========   unweighted _u ;    weighted _w        =============
+# =================================================================
+
+z <- evaluate_replicates(replSet)
+
+# Compute confidence intervals for emigration rates by sex
+alpha <- 0.05   # 95% confidence interval
+namcase <- c("Combined","Males","Females")
+
+# Emigration probabilities: Unweighted data
+prates_u <- ci(bdata=z$boot_rate_u,expected=rates_u0,alpha)
+
+# Emigration probabilities: Weighted data
+prates_w <- ci(bdata=z$boot_rate_w,expected=rates_w0,alpha)
+
+# =================================================================
+# ===========       Print emigration rates by sex        ==========
+# ===========     for unweighted and weighted data       ==========
+# ===========             Replicates                     ==========
+# =================================================================
+print ("Emigration rates and 95% confidence intervals")
+print (prates_u)
+print (prates_w)
+
+# =================================================================
+# ===================             Trend             ===============
+# ===============   Original sample and replicates   ==============
+# =================================================================
+# # Use original sample data and create a dataframe with events, exposure and rates
+t_ev0 <- cbind (migr_rates0$cases$Combined$trend$events,
+       migr_rates0$cases$Male$trend$events,
+       migr_rates0$cases$Female$trend$events)
+t_ex0 <- cbind(migr_rates0$cases$Combined$trend$exposure,
+      migr_rates0$cases$Male$trend$exposure,
+      migr_rates0$cases$Female$trend$exposure)
+t_rate0 <- cbind(migr_rates0$cases$Combined$trend$intensity,
+      migr_rates0$cases$Male$trend$intensity,
+      migr_rates0$cases$Female$trend$intensity)
+dimnames(t_ev0) <- list (Period=c("<1975","1975-84","1985-94","1995-08",">2008"),Sex=namcase)
+dimnames (t_ex0) <- dimnames(t_rate0) <- dimnames(t_ev0)
+addmargins (t_ev0[,2:3])
+addmargins(t_ex0[,2:3])
+addmargins (t_ev0[,2:3])/addmargins(t_ex0[,2:3])
+
+# Trend in emigration probabilities between 18 ane 40
+1-exp(-t_rate0[,2]*(40-18))
+1-exp(-t_rate0[,3]*(40-18))
+1-exp(-t_rate0[,1]*(40-18))
+1-exp(-(addmargins (t_ev0[,2:3])/addmargins(t_ex0[,2:3]))[6,]*(40-18))
+
+# Using replicates
+# M+F
+prates_w_trend_MF <- ci(bdata=z$boot_rate_w_trend_MF,expected=t_rate0[,1],alpha)
+# Males
+prates_w_trend_M <- ci(bdata=z$boot_rate_w_trend_M,expected=t_rate0[,2],alpha)
+#Females
+prates_w_trend_F <- ci(bdata=z$boot_rate_w_trend_F,expected=t_rate0[,3],alpha)
+
+# =================================================================
+# =========  Age-specific rates (piecewise constant rates)  =======
+# ===============   Original sample and replicates   ==============
+# =================================================================
+# Use original sample data and create a dataframe with events, exposure and rates
+a_ev0 <- cbind (migr_rates0$cases$Combined$ASMR$events,
+               migr_rates0$cases$Male$ASMR$events,
+               migr_rates0$cases$Female$ASMR$events)
+a_ex0 <- cbind(migr_rates0$cases$Combined$ASMR$exposure,
+              migr_rates0$cases$Male$ASMR$exposure,
+              migr_rates0$cases$Female$ASMR$exposure)
+a_rate0 <- cbind(migr_rates0$cases$Combined$ASMR$intensity,
+                migr_rates0$cases$Male$ASMR$intensity,
+                migr_rates0$cases$Female$ASMR$intensity)
+dimnames(a_ev0) <- list (Age=c("<18","18-24","25-29","30-39",">=40"),Sex=namcase)
+dimnames (a_ex0) <- dimnames(a_rate0) <- dimnames(a_ev0)
+addmargins (a_ev0[,2:3])
+addmargins(a_ex0[,2:3])
+addmargins (a_ev0[,2:3])/addmargins(a_ex0[,2:3])
+
+# Using replicates
+# M+F
+prates_w_ASMR_MF <- ci(bdata=z$boot_rate_w_ASMR_MF,expected=a_rate0[,1],alpha)
+# Males
+prates_w_ASMR_M <- ci(bdata=z$boot_rate_w_ASMR_M,expected=a_rate0[,2],alpha)
+# Females
+prates_w_ASMR_F <- ci(bdata=z$boot_rate_w_ASMR_F,expected=a_rate0[,3],alpha)
+
+
+# Emigration probabilities
+probm <- 1-exp(-sum (a_rate0[2:4,2]*c(7,5,10)))
+probf <- 1-exp(-sum (a_rate0[2:4,3]*c(7,5,10)))
+probt <- 1-exp(-sum (a_rate0[2:4,1]*c(7,5,10)))
+
+# Use replicates to estimate confidence interval of cumulative emigration probability
+prob_estim <- c(probm,probf,probt)
+prob_p <- ci(bdata=z$boot_prob,expected=prob_estim,alpha)
+rownames(prob_p)<- c("Males","Females","Combined")
+# Print tables of paper
+prates_u
+prates_w
+prates_w_trend_M
+prates_w_trend_F
+prates_w_trend_MF
+prates_w_ASMR_M
+prates_w_ASMR_F
+prates_w_ASMR_MF
+prob_p
+
+
+
+
+
+
+
+
