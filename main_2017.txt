@@ -17,7 +17,7 @@ path <-  "path to the  Dataset"
 d.merge<- read.table(file=paste (path,"dataMAFE_prep27012016.txt",sep=""), header = TRUE)
 data$hh.ident=data$n.menage
 
-locpath_read <- "/Users/frans/Documents/R/MAFE/R/Read/"
+
 names(d.merge)[which (names (d.merge)=="n.menage.x")] <- "n.menage"
 names(d.merge)[which (names (d.merge)=="n.indiv.x")] <- "n.indiv"
 getwd()
