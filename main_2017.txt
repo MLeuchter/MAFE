@@ -14,7 +14,7 @@ library(mgcv)
 library (eha)  # for function table.events in migr.rates.R
 path <-  "path to the  Dataset"
 
-d.merge<- read.table(file=paste (path,"dataMAFE_prep27012016.txt",sep=""), header = TRUE)
+d.merge<- read.table(file=paste (path,"prep_MAFE_dataset.txt",sep=""), header = TRUE)
 data$hh.ident=data$n.menage
 
 
